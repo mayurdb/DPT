@@ -97,13 +97,13 @@ class DPTDepthModel(DPT):
         self.invert = invert
 
         head = nn.Sequential(
-            nn.Conv2d(features, features // 2, kernel_size=3, stride=1, padding=1),
-            Interpolate(scale_factor=2, mode="bilinear", align_corners=True),
-            nn.Conv2d(features // 2, 32, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(True),
-            nn.Conv2d(32, 1, kernel_size=1, stride=1, padding=0),
-            nn.ReLU(True) if non_negative else nn.Identity(),
-            nn.Identity(),
+            nn.Conv2d(features, features // 2, kernel_size=3, stride=1, padding=1), # batch x features // 2 x w x h
+            Interpolate(scale_factor=2, mode="bilinear", align_corners=True), # batch x features // 2 x w*2 x h*2
+            nn.Conv2d(features // 2, 32, kernel_size=3, stride=1, padding=1), # batch x 32 x w*2 x h*2
+            nn.ReLU(True), # batch x 32 x w*2 x h*2
+            nn.Conv2d(32, 1, kernel_size=1, stride=1, padding=0), # batch x 1 x w*2 x h*2
+            nn.ReLU(True) if non_negative else nn.Identity(), # batch x 1 x w*2 x h*2
+            nn.Identity(), # batch x 1 x w*2 x h*2
         )
 
         super().__init__(head, **kwargs)
@@ -131,12 +131,12 @@ class DPTSegmentationModel(DPT):
         kwargs["use_bn"] = True
 
         head = nn.Sequential(
-            nn.Conv2d(features, features, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(features),
-            nn.ReLU(True),
-            nn.Dropout(0.1, False),
-            nn.Conv2d(features, num_classes, kernel_size=1),
-            Interpolate(scale_factor=2, mode="bilinear", align_corners=True),
+            nn.Conv2d(features, features, kernel_size=3, padding=1, bias=False), # batch x features x w x h
+            nn.BatchNorm2d(features), # batch x features x w x h
+            nn.ReLU(True), # batch x features x w x h
+            nn.Dropout(0.1, False), # batch x features x w x h
+            nn.Conv2d(features, num_classes, kernel_size=1), # batch x num_classes x w x h
+            Interpolate(scale_factor=2, mode="bilinear", align_corners=True), # batch x num_classes x w*2 x h*2
         )
 
         super().__init__(head, **kwargs)
@@ -151,3 +151,64 @@ class DPTSegmentationModel(DPT):
 
         if path is not None:
             self.load(path)
+
+
+class DPTBinaryClassification(DPT):
+    def __init__(self, net_w, net_h, path=None, **kwargs):
+
+        features = kwargs["features"] if "features" in kwargs else 256
+
+        kwargs["use_bn"] = True
+
+        # Too heavy
+        # head = nn.Sequential(
+        #     # batch x features x height x width
+        #     nn.Conv2d(features, features * 2, kernel_size=3, padding=1, bias=False), # batch x features*2 x height x width
+        #     nn.BatchNorm2d(features * 2), # batch x features*2 x height x width
+        #     nn.ReLU(True), # batch x features*2 x height x width
+        #     nn.Dropout(0.1, False), # batch x features*2 x height x width
+        #     nn.Flatten(1), # batch x features*2*height*width
+        #     nn.ReLU(True), # batch x features*2*height*width
+        #     nn.Linear(in_features=features*2*net_w*net_h, out_features=100), # batch x 100
+        #     nn.ReLU(True), # batch x 100
+        #     nn.Dropout(0.1, False), # batch x 100
+        #     nn.Linear(in_features=100, out_features=2), # batch x 2
+        #     nn.Softmax(dim=1) # batch x 2
+        # )
+
+        head = nn.Sequential(
+            # batch x features x height x width
+            nn.Flatten(1), # batch x features*height*width
+            nn.Linear(in_features=features * net_w * net_h, out_features=2), # batch x 2
+            nn.Softmax(dim=1) # batch x 2
+        )
+
+        # Sample output
+        # Layer: Conv2d, Output Shape: torch.Size([2, 20, 4, 5])
+        # Layer: BatchNorm2d, Output Shape: torch.Size([2, 20, 4, 5])
+        # Layer: ReLU, Output Shape: torch.Size([2, 20, 4, 5])
+        # Layer: Dropout, Output Shape: torch.Size([2, 20, 4, 5])
+        # Layer: Flatten, Output Shape: torch.Size([2, 400])
+        # Layer: ReLU, Output Shape: torch.Size([2, 400])
+        # Layer: Linear, Output Shape: torch.Size([2, 100])
+        # Layer: ReLU, Output Shape: torch.Size([2, 100])
+        # Layer: Dropout, Output Shape: torch.Size([2, 100])
+        # Layer: Linear, Output Shape: torch.Size([2, 2])
+        # Layer: Softmax, Output Shape: torch.Size([2, 2])
+
+        super().__init__(head, **kwargs)
+
+        # self.auxlayer = nn.Sequential(
+        #     nn.Flatten(1), # batch x features*height*width
+        #     nn.Linear(in_features=features * net_w * net_h, out_features=2), # batch x 2
+        #     nn.Softmax(dim=1) # batch x 2
+        # )
+
+        # if path is not None:
+            # self.load(path)
+
+    def forward(self, x):
+        print("Called forward")
+        output = super().forward(x).squeeze(dim=1)
+        print("Got back")
+        return torch.max(output, dim=-1)
